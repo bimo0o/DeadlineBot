@@ -6,7 +6,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram import Router
-from aiogram.utils.markdown import *
 from datetime import datetime
 import asyncio
 
@@ -24,7 +23,6 @@ cursor = conn.cursor()
 # Создание таблиц для дедлайнов и модераторов
 cursor.execute('''CREATE TABLE IF NOT EXISTS deadlines
                   (id INTEGER PRIMARY KEY, description TEXT, deadline_date TEXT)''')
-
 cursor.execute('''CREATE TABLE IF NOT EXISTS moderators
                   (id INTEGER PRIMARY KEY, username TEXT UNIQUE)''')
 conn.commit()
@@ -34,6 +32,7 @@ conn.commit()
 class AddDeadline(StatesGroup):
     waiting_for_date = State()
     waiting_for_description = State()
+    waiting_for_delete = State()
 
 
 # Создание роутера
@@ -45,14 +44,16 @@ router = Router()
 async def send_welcome(message: types.Message):
     user_keyboard = ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="Показать дедлайны")],
-        [KeyboardButton(text="Добавить дедлайн")]
+        [KeyboardButton(text="Добавить дедлайн")],
+        [KeyboardButton(text="Удалить дедлайн")]
     ], resize_keyboard=True)
 
     if message.from_user.id == MAIN_MODERATOR_ID:
         moderator_keyboard = ReplyKeyboardMarkup(keyboard=[
             [KeyboardButton(text="Добавить модератора")],
             [KeyboardButton(text="Показать дедлайны")],
-            [KeyboardButton(text="Добавить дедлайн")]
+            [KeyboardButton(text="Добавить дедлайн")],
+            [KeyboardButton(text="Удалить дедлайн")]
         ], resize_keyboard=True)
         await message.answer("Привет, главный модератор! Выберите действие:", reply_markup=moderator_keyboard)
     else:
@@ -74,26 +75,53 @@ async def show_deadlines(message: types.Message):
 
                 response += (
                     f"Дедлайн #{idx}:\n"
-                    f"Описание: {desc}\n"
-                    f"Дата и время: {deadline_date}\n"
-                    f"Команда для удаления: /delete_{deadline_id}\n\n"
+                    f"- Описание: {desc}\n"
+                    f"- Дата и время: {deadline_date}\n\n"
                 )
             except ValueError as e:
-                response += f"Дедлайн #{idx}:\nОписание: {desc}\nДата: {date} (Неправильный формат)\n\n"
+                response += f"Дедлайн #{idx}:\n- Описание: {desc}\n- Дата: {date} (Неправильный формат)\n\n"
 
         await message.answer(response)
     else:
         await message.answer("Нет активных дедлайнов.")
 
 
-# Начало процесса удаления дедлайна
-@router.message(lambda message: message.text.startswith("/delete_"))
-async def delete_deadline(message: types.Message):
-    deadline_id = message.text.split("_")[1]
-    cursor.execute("DELETE FROM deadlines WHERE id = ?", (deadline_id,))
-    conn.commit()
-    await message.answer("Дедлайн успешно удален.")
-    await show_deadlines(message)
+@router.message(lambda message: message.text == "Удалить дедлайн")
+async def start_delete_deadline(message: types.Message, state: FSMContext):
+    cursor.execute("SELECT id, description FROM deadlines ORDER BY deadline_date")
+    deadlines = cursor.fetchall()
+
+    if deadlines:
+        response = "Выберите дедлайн для удаления:\n"
+        for idx, (deadline_id, desc) in enumerate(deadlines, 1):
+            response += f"{idx}. {desc}\n"  # Убираем "Дедлайн #" из вывода
+
+        response += "\nВведите номер дедлайна для удаления:"
+        await message.answer(response)
+
+        # Устанавливаем состояние для ожидания номера дедлайна
+        await state.set_state(AddDeadline.waiting_for_delete)
+    else:
+        await message.answer("Нет активных дедлайнов для удаления.")
+
+
+# Обработка выбора дедлайна для удаления
+@router.message(AddDeadline.waiting_for_delete)
+async def process_deadline_deletion(message: types.Message):
+    try:
+        deadline_index = int(message.text) - 1  # Преобразуем номер в индекс
+        cursor.execute("SELECT id FROM deadlines ORDER BY deadline_date")
+        deadlines = cursor.fetchall()
+
+        if 0 <= deadline_index < len(deadlines):
+            deadline_id = deadlines[deadline_index][0]
+            cursor.execute("DELETE FROM deadlines WHERE id = ?", (deadline_id,))
+            conn.commit()
+            await message.answer("Дедлайн успешно удален.")
+        else:
+            await message.answer("Неверный номер дедлайна. Пожалуйста, попробуйте еще раз.")
+    except ValueError:
+        await message.answer("Пожалуйста, введите номер дедлайна для удаления.")
 
 
 # Начало добавления дедлайна: запрос даты и времени
