@@ -10,11 +10,11 @@ from datetime import datetime, timedelta
 import asyncio
 import pytz
 
-TOKEN = '8199760860:AAGGUDgYGANFPNuX2fRHA1YWwgpOfbXpg0c'
+TOKEN = 'token'
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-MAIN_MODERATOR_ID = 712016596
+MAIN_MODERATOR_ID = id
 
 conn = sqlite3.connect('deadlines.db')
 cursor = conn.cursor()
